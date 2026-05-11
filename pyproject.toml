@@ -1,6 +1,6 @@
 [project]
 name = "parions-sport-mcp"
-version = "0.1.0"
+version = "0.1.1"
 description = "MCP server exposing current Parions Sport Point de Vente odds from the official FDJ offer database."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -32,9 +32,16 @@ dependencies = [
   "pydantic>=2.7.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/teefloo/parions-sport-odds-mcp"
+Repository = "https://github.com/teefloo/parions-sport-odds-mcp"
+Issues = "https://github.com/teefloo/parions-sport-odds-mcp/issues"
+Changelog = "https://github.com/teefloo/parions-sport-odds-mcp/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0.0",
+  "ruff>=0.8.0",
 ]
 
 [project.scripts]

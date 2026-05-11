@@ -9,10 +9,10 @@ import sqlite3
 import tempfile
 import threading
 import zipfile
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable
 
 import httpx
 
@@ -64,7 +64,7 @@ class FDJOfferStore:
         self._lock = threading.RLock()
 
     @classmethod
-    def from_env(cls) -> "FDJOfferStore":
+    def from_env(cls) -> FDJOfferStore:
         return cls(
             source_url=os.getenv("PARIONS_SPORT_OFFER_URL", DEFAULT_OFFER_ZIP_URL),
             cache_dir=os.getenv("PARIONS_SPORT_CACHE_DIR"),

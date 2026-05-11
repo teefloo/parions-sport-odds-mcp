@@ -100,6 +100,25 @@ Inspect it during development:
 uv run mcp dev src/parions_sport_mcp/server.py
 ```
 
+Smoke-test the server from an MCP client session:
+
+```bash
+uv run python - <<'PY'
+import asyncio
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+async def main():
+    params = StdioServerParameters(command="uv", args=["run", "parions-sport-mcp"])
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            print([tool.name for tool in (await session.list_tools()).tools])
+
+asyncio.run(main())
+PY
+```
+
 ## Claude Desktop
 
 Add this to your Claude Desktop MCP configuration, replacing the path with this repository's absolute path:
@@ -163,7 +182,13 @@ uv run --extra dev pytest
 Run the optional live FDJ ZIP test:
 
 ```bash
-FDJ_LIVE_TESTS=1 uv run pytest tests/test_live_fdj.py
+FDJ_LIVE_TESTS=1 uv run --extra dev pytest tests/test_live_fdj.py
+```
+
+Run lint:
+
+```bash
+uv run ruff check .
 ```
 
 The live test downloads the official ZIP and validates the expected SQLite schema.

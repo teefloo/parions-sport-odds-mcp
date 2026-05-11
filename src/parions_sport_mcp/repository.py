@@ -3,12 +3,12 @@ from __future__ import annotations
 import re
 import sqlite3
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any
 
 from .errors import SchemaDriftError
-
 
 REQUIRED_SCHEMA: dict[str, set[str]] = {
     "offer_1n2": {
