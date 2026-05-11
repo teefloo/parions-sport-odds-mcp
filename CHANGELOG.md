@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2 - 2026-05-11
+
+- Opt GitHub Actions into Node 24 to avoid Node 20 deprecation annotations.
+
 ## 0.1.1 - 2026-05-11
 
 - Add repository hardening: package URLs, lint in CI, contribution guidance, GitHub templates, and typed package marker.

@@ -1,6 +1,6 @@
 [project]
 name = "parions-sport-mcp"
-version = "0.1.1"
+version = "0.1.2"
 description = "MCP server exposing current Parions Sport Point de Vente odds from the official FDJ offer database."
 readme = "README.md"
 requires-python = ">=3.10"
