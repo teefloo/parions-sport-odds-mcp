@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3 - 2026-05-11
+
+- Update GitHub Actions to current Node 24-compatible major versions.
+- Raise the minimum MCP SDK requirement to `mcp[cli]>=1.27.1`.
+
 ## 0.1.2 - 2026-05-11
 
 - Opt GitHub Actions into Node 24 to avoid Node 20 deprecation annotations.
