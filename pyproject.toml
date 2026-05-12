@@ -2,7 +2,7 @@
 name = "parions-sport-mcp"
 version = "0.1.3"
 description = "MCP server exposing current Parions Sport Point de Vente odds from the official FDJ offer database."
-readme = "README.md"
+readme = "documents/mcp/README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Codex" }]
@@ -36,7 +36,7 @@ dependencies = [
 Homepage = "https://github.com/teefloo/parions-sport-odds-mcp"
 Repository = "https://github.com/teefloo/parions-sport-odds-mcp"
 Issues = "https://github.com/teefloo/parions-sport-odds-mcp/issues"
-Changelog = "https://github.com/teefloo/parions-sport-odds-mcp/blob/main/CHANGELOG.md"
+Changelog = "https://github.com/teefloo/parions-sport-odds-mcp/blob/main/documents/mcp/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
