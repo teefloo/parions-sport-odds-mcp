@@ -11,9 +11,20 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from . import __version__
 from .errors import ParionsSportError
 from .fdj_client import FDJOfferStore
+from .matching import extract_teams, fixture_similarity
 from .repository import EventFilter, OddsRepository
+from .results_client import TheSportsDBResultsClient, normalize_sport
 
 LOGGER = logging.getLogger("parions_sport_mcp")
+
+# Minimum fuzzy fixture score to accept an odds<->result link.
+MATCH_THRESHOLD = 0.6
+
+RESULT_DISCLAIMER = (
+    "Odds are from FDJ; the linked result is from TheSportsDB and matched "
+    "heuristically on team names and date. Confirm against an official source "
+    "before relying on the link."
+)
 
 
 def configure_logging() -> None:
@@ -71,6 +82,39 @@ class EventOddsParams(BaseModel):
             return None
         stripped = value.strip()
         return stripped or None
+
+
+class MatchResultsParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sport: str | None = None
+    league: str | int | None = None
+    team: str | None = None
+    date: str | None = None
+    finished_only: bool = True
+    limit: int = Field(default=20, ge=1, le=100)
+
+    @field_validator("sport", "team")
+    @classmethod
+    def clean_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+    @field_validator("date")
+    @classmethod
+    def clean_date(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            datetime.strptime(text, "%Y-%m-%d")
+        except ValueError as exc:
+            raise ValueError(f"Invalid date '{value}'. Use YYYY-MM-DD.") from exc
+        return text
 
 
 class OddsTools:
@@ -176,6 +220,176 @@ class OddsTools:
         }
 
 
+class ResultsTools:
+    def __init__(self, client: TheSportsDBResultsClient) -> None:
+        self.client = client
+
+    def get_match_results(
+        self,
+        sport: str | None = None,
+        league: str | int | None = None,
+        team: str | None = None,
+        date: str | None = None,
+        finished_only: bool = True,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        params = MatchResultsParams(
+            sport=sport,
+            league=league,
+            team=team,
+            date=date,
+            finished_only=finished_only,
+            limit=limit,
+        )
+        results, metadata = self.client.get_results(
+            sport=params.sport,
+            league=params.league,
+            team=params.team,
+            date=params.date,
+            finished_only=params.finished_only,
+            limit=params.limit,
+        )
+        return {
+            "query": params.model_dump(),
+            "count": len(results),
+            "results": results,
+            "source": {
+                "name": "TheSportsDB",
+                "url": metadata.source_url,
+                "retrieved_at": metadata.retrieved_at,
+            },
+            "cache": metadata.to_dict(),
+            "warnings": [],
+            "disclaimer": (
+                "Results are informational and provided by TheSportsDB. Verify "
+                "against an official source before relying on them."
+            ),
+        }
+
+
+class LinkResultParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: int = Field(ge=1)
+    day_window: int = Field(default=1, ge=0, le=3)
+
+
+class LinkTools:
+    def __init__(self, store: FDJOfferStore, client: TheSportsDBResultsClient) -> None:
+        self.store = store
+        self.client = client
+
+    def get_event_result(self, event_id: int, day_window: int = 1) -> dict[str, Any]:
+        params = LinkResultParams(event_id=event_id, day_window=day_window)
+
+        connection, metadata, warnings = self.store.get_connection()
+        try:
+            event = OddsRepository(connection).get_event_odds(
+                params.event_id, max_markets=50
+            )
+        finally:
+            connection.close()
+
+        if event is None:
+            return {
+                "event_id": params.event_id,
+                "found": False,
+                "odds_event": None,
+                "result": None,
+                "match_confidence": 0.0,
+                "warnings": warnings,
+                "error": "Unknown Parions Sport event id.",
+                "disclaimer": RESULT_DISCLAIMER,
+            }
+
+        home, away = extract_teams(event)
+        sport = normalize_sport(event["sport"]["name"])
+        candidates, result_source = self._collect_results(
+            event["start_time"], sport, params.day_window
+        )
+        best, score, orientation = self._best_match(home, away, candidates)
+        found = best is not None and score >= MATCH_THRESHOLD
+
+        result_warnings = list(warnings)
+        if not found:
+            result_warnings.append("NO_RESULT_MATCH")
+
+        return {
+            "event_id": params.event_id,
+            "found": found,
+            "odds_event": {
+                "event_name": event["event_name"],
+                "sport": event["sport"]["name"],
+                "competition": event["competition"]["name"],
+                "start_time": event["start_time"],
+                "teams": {"home": home, "away": away},
+            },
+            "result": best if found else None,
+            "match_confidence": round(score, 3),
+            "orientation": orientation if found else None,
+            "source": {
+                "odds": {
+                    "name": "Parions Sport Point de Vente",
+                    "operator": "FDJ",
+                    "url": metadata.source_url,
+                },
+                "results": result_source,
+            },
+            "warnings": result_warnings,
+            "disclaimer": RESULT_DISCLAIMER,
+        }
+
+    def _collect_results(
+        self, start_time: str | None, sport: str | None, day_window: int
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        if not start_time:
+            return [], None
+        try:
+            base = datetime.fromisoformat(start_time.replace("Z", "+00:00")).date()
+        except ValueError:
+            return [], None
+
+        # Query the kickoff date first, then widen by a day each side; an event's
+        # UTC calendar date can differ between providers.
+        offsets = [0]
+        for delta in range(1, day_window + 1):
+            offsets.extend([-delta, delta])
+
+        seen: set[Any] = set()
+        candidates: list[dict[str, Any]] = []
+        source: dict[str, Any] | None = None
+        for offset in offsets:
+            day = (base + timedelta(days=offset)).isoformat()
+            results, meta = self.client.get_results(
+                sport=sport, date=day, finished_only=True, limit=100
+            )
+            if source is None:
+                source = {"name": "TheSportsDB", "url": meta.source_url}
+            for result in results:
+                key = result.get("match_id")
+                if key not in seen:
+                    seen.add(key)
+                    candidates.append(result)
+        return candidates, source
+
+    @staticmethod
+    def _best_match(
+        home: str | None, away: str | None, candidates: list[dict[str, Any]]
+    ) -> tuple[dict[str, Any] | None, float, str | None]:
+        if not home or not away:
+            return None, 0.0, None
+        best: dict[str, Any] | None = None
+        best_score = 0.0
+        best_orientation: str | None = None
+        for candidate in candidates:
+            score, orientation = fixture_similarity(
+                home, away, candidate.get("home_team"), candidate.get("away_team")
+            )
+            if score > best_score:
+                best, best_score, best_orientation = candidate, score, orientation
+        return best, best_score, best_orientation
+
+
 def parse_tool_datetime(value: str | None, *, end_of_day: bool) -> datetime | None:
     if value is None:
         return None
@@ -202,8 +416,15 @@ def parse_tool_datetime(value: str | None, *, end_of_day: bool) -> datetime | No
         ) from exc
 
 
-def create_mcp(store: FDJOfferStore | None = None) -> FastMCP:
-    tools = OddsTools(store or FDJOfferStore.from_env())
+def create_mcp(
+    store: FDJOfferStore | None = None,
+    results_client: TheSportsDBResultsClient | None = None,
+) -> FastMCP:
+    fdj_store = store or FDJOfferStore.from_env()
+    sportsdb = results_client or TheSportsDBResultsClient.from_env()
+    tools = OddsTools(fdj_store)
+    results = ResultsTools(sportsdb)
+    linker = LinkTools(fdj_store, sportsdb)
     mcp = FastMCP("parions-sport-odds")
 
     @mcp.tool()
@@ -252,6 +473,39 @@ def create_mcp(store: FDJOfferStore | None = None) -> FastMCP:
         """Return all available odds for a specific Parions Sport event id."""
 
         return _run_tool(tools.get_event_odds, event_id, market, max_markets)
+
+    @mcp.tool()
+    def get_match_results(
+        sport: str | None = None,
+        league: str | int | None = None,
+        team: str | None = None,
+        date: str | None = None,
+        finished_only: bool = True,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """Return finished match results (teams, score, date, competition).
+
+        Multi-sport via TheSportsDB. Provide at least one of: date (YYYY-MM-DD),
+        league (name or id), or team. sport accepts names like "football",
+        "basket", "tennis", "rugby", "hockey". Set finished_only=False to also
+        include scheduled/in-progress fixtures for a date.
+        """
+
+        return _run_tool(
+            results.get_match_results, sport, league, team, date, finished_only, limit
+        )
+
+    @mcp.tool()
+    def get_event_result(event_id: int, day_window: int = 1) -> dict[str, Any]:
+        """Link a Parions Sport event to its finished result.
+
+        Reads the event's teams and kickoff date from the FDJ offer, then fuzzy-
+        matches a TheSportsDB result on team names and date. day_window widens the
+        date search by N days each side (default 1). Returns the odds event, the
+        matched result, and a 0..1 match_confidence; found is false below 0.6.
+        """
+
+        return _run_tool(linker.get_event_result, event_id, day_window)
 
     return mcp
 
