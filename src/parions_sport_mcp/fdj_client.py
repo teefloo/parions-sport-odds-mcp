@@ -191,8 +191,14 @@ class FDJOfferStore:
         temp = Path(temp_path)
         try:
             temp.write_bytes(database_bytes)
-            with sqlite3.connect(f"file:{temp}?mode=ro", uri=True) as connection:
+            # NB: ``with sqlite3.connect(...)`` only commits/rolls back; it does
+            # not close the connection. Closing explicitly releases the file
+            # handle so ``temp.replace`` can succeed on Windows.
+            connection = sqlite3.connect(f"file:{temp}?mode=ro", uri=True)
+            try:
                 OddsRepository.assert_schema(connection)
+            finally:
+                connection.close()
             temp.replace(self.database_path)
         except sqlite3.DatabaseError as exc:
             raise InvalidSourceDataError(

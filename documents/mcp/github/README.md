@@ -39,6 +39,53 @@ Searches current events and returns structured odds. Dates accept `YYYY-MM-DD` o
 
 Returns all available markets and odds for one event id. The optional `market` filter matches market labels, market type names, and lines/handicaps.
 
+`get_match_results(sport?, league?, team?, date?, finished_only=true, limit=20)`
+
+Returns finished match results (teams, score, date, competition) across sports via [TheSportsDB](https://www.thesportsdb.com/). Provide at least one of `date` (`YYYY-MM-DD`), `league` (name or numeric id), or `team`. `sport` accepts names such as `football`, `basket`, `tennis`, `rugby`, `hockey`. Set `finished_only=false` to also include scheduled/in-progress fixtures for a date.
+
+```json
+{
+  "count": 1,
+  "results": [
+    {
+      "match_id": "2052305",
+      "sport": "Soccer",
+      "league": "French Ligue 1",
+      "date": "2026-05-12T18:30:00",
+      "status": "Match Finished",
+      "home_team": "Red Star",
+      "away_team": "Rodez",
+      "score": { "home": 2, "away": 1 }
+    }
+  ],
+  "source": { "name": "TheSportsDB" }
+}
+```
+
+Results come from a different provider than the FDJ odds, so match ids do not map to FDJ `event_id`s; reconcile on team names and date if you need to link a result to its odds.
+
+Notes: on TheSportsDB's free key, league-listing endpoints are capped, so `league` resolves common names via a built-in map (Ligue 1/2, Premier League, La Liga, Serie A, Bundesliga, Champions League, NBA, NFL, NHL, MLB, …) or any numeric league id. A bare `sport` like `basket` mixes leagues (e.g. NBA and WNBA) — pass `league="NBA"` to narrow it.
+
+`get_event_result(event_id: int, day_window=1)`
+
+Links a Parions Sport event to its finished result. It reads the event's teams and kickoff date from the FDJ offer, then fuzzy-matches a TheSportsDB result on team names and date. `day_window` widens the date search by N days each side (default 1) to absorb provider timezone differences. Returns the odds event, the matched `result`, an `orientation` (`same`/`swapped` home/away), and a `0..1` `match_confidence`; `found` is `false` below `0.6` and adds `NO_RESULT_MATCH` to `warnings`.
+
+```json
+{
+  "event_id": 1275790,
+  "found": true,
+  "odds_event": {
+    "event_name": "Red Star-Rodez",
+    "teams": { "home": "Red Star", "away": "Rodez" }
+  },
+  "result": { "home_team": "Red Star FC", "away_team": "Rodez AF", "score": { "home": 2, "away": 1 } },
+  "match_confidence": 0.95,
+  "orientation": "same"
+}
+```
+
+Limits: the two providers use different team names. Club names usually align ("Red Star" vs "Red Star FC"), but national teams differ by language — FDJ's French labels ("Turquie", "Allemagne") do not match TheSportsDB's English ones ("Turkey", "Germany"), so international fixtures often fall below the confidence threshold. Linking also only succeeds once the match is actually finished and present in TheSportsDB.
+
 ## Output Shape
 
 Each tool returns JSON with source/cache metadata and warnings. Odds responses include:
@@ -170,6 +217,14 @@ Environment variables:
 `PARIONS_SPORT_CACHE_TTL_SECONDS`: fallback cache TTL when response headers do not include `max-age`. Defaults to `120`.
 
 `PARIONS_SPORT_TIMEOUT_SECONDS`: HTTP timeout for ZIP refreshes. Defaults to `20`.
+
+`THESPORTSDB_API_KEY`: key for the `get_match_results` provider (TheSportsDB). Defaults to the free public test key `3`; set a personal/Patreon key for higher limits and fresher data.
+
+`THESPORTSDB_BASE_URL`: override the TheSportsDB base URL. Defaults to `https://www.thesportsdb.com/api/v1/json`.
+
+`THESPORTSDB_CACHE_TTL_SECONDS`: in-memory cache TTL for results responses. Defaults to `300`.
+
+`THESPORTSDB_TIMEOUT_SECONDS`: HTTP timeout for results requests. Defaults to `20`.
 
 ## Tests
 
