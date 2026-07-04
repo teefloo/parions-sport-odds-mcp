@@ -80,7 +80,7 @@ class EventFilter:
     date_to: datetime | None = None
     market: str | None = None
     limit: int = 20
-    max_markets_per_event: int = 50
+    max_markets_per_event: int | None = None
 
 
 class OddsRepository:
@@ -253,7 +253,7 @@ class OddsRepository:
         ]
 
     def get_event_odds(
-        self, event_id: int, market: str | None = None, max_markets: int = 200
+        self, event_id: int, market: str | None = None, max_markets: int | None = None
     ) -> dict[str, Any] | None:
         row = self.connection.execute(
             """
@@ -273,7 +273,7 @@ class OddsRepository:
         return self._build_event(row, market_filter=market, max_markets=max_markets)
 
     def _build_event(
-        self, row: sqlite3.Row, market_filter: str | None, max_markets: int
+        self, row: sqlite3.Row, market_filter: str | None, max_markets: int | None
     ) -> dict[str, Any]:
         markets = self._get_markets(row["event_id"], market_filter, max_markets)
         return {
@@ -302,7 +302,7 @@ class OddsRepository:
         }
 
     def _get_markets(
-        self, event_id: int, market_filter: str | None, max_markets: int
+        self, event_id: int, market_filter: str | None, max_markets: int | None
     ) -> list[dict[str, Any]]:
         clauses = ["m.event_id = ?"]
         params: list[Any] = [event_id]
@@ -319,6 +319,14 @@ class OddsRepository:
             like = f"%{market_filter.lower()}%"
             params.extend([like, like, like])
 
+        # max_markets is None by default so every market for the event is
+        # returned; callers may still pass an explicit cap to bound payload
+        # size for events with very large numbers of markets.
+        limit_sql = ""
+        if max_markets is not None:
+            limit_sql = "limit ?"
+            params.append(max_markets)
+
         market_rows = self.connection.execute(
             f"""
             select m.market_id, m.lib, m.handicap, m.pari_type_ref, m.status_ref,
@@ -328,9 +336,9 @@ class OddsRepository:
             left join pari_type pt on pt.pari_type_id = m.pari_type_ref
             where {" and ".join(clauses)}
             order by m.sort_order, m.pos, m.market_id
-            limit ?
+            {limit_sql}
             """,
-            [*params, max_markets],
+            params,
         ).fetchall()
         if not market_rows:
             return []

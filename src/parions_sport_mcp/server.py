@@ -45,7 +45,7 @@ class SearchOddsParams(BaseModel):
     date_to: str | None = None
     market: str | None = None
     limit: int = Field(default=20, ge=1, le=100)
-    max_markets_per_event: int = Field(default=50, ge=1, le=200)
+    max_markets_per_event: int | None = Field(default=None, ge=1, le=2000)
 
     @field_validator("event_query", "market")
     @classmethod
@@ -73,7 +73,7 @@ class EventOddsParams(BaseModel):
 
     event_id: int = Field(ge=1)
     market: str | None = None
-    max_markets: int = Field(default=200, ge=1, le=500)
+    max_markets: int | None = Field(default=None, ge=1, le=5000)
 
     @field_validator("market")
     @classmethod
@@ -146,7 +146,7 @@ class OddsTools:
         date_to: str | None = None,
         market: str | None = None,
         limit: int = 20,
-        max_markets_per_event: int = 50,
+        max_markets_per_event: int | None = None,
     ) -> dict[str, Any]:
         params = SearchOddsParams(
             sport=sport,
@@ -174,7 +174,7 @@ class OddsTools:
             connection.close()
 
     def get_event_odds(
-        self, event_id: int, market: str | None = None, max_markets: int = 200
+        self, event_id: int, market: str | None = None, max_markets: int | None = None
     ) -> dict[str, Any]:
         params = EventOddsParams(
             event_id=event_id,
@@ -284,9 +284,7 @@ class LinkTools:
 
         connection, metadata, warnings = self.store.get_connection()
         try:
-            event = OddsRepository(connection).get_event_odds(
-                params.event_id, max_markets=50
-            )
+            event = OddsRepository(connection).get_event_odds(params.event_id)
         finally:
             connection.close()
 
@@ -448,9 +446,15 @@ def create_mcp(
         date_to: str | None = None,
         market: str | None = None,
         limit: int = 20,
-        max_markets_per_event: int = 50,
+        max_markets_per_event: int | None = None,
     ) -> dict[str, Any]:
-        """Search current odds by sport, competition, event, date, or market."""
+        """Search current odds by sport, competition, event, date, or market.
+
+        Returns every market available for each matched event (1X2,
+        over/under, handicap, etc.) by default. Pass max_markets_per_event to
+        cap the number of markets returned per event, e.g. to limit payload
+        size when scanning many events at once.
+        """
 
         return _run_tool(
             tools.search_odds,
@@ -468,9 +472,13 @@ def create_mcp(
     def get_event_odds(
         event_id: int,
         market: str | None = None,
-        max_markets: int = 200,
+        max_markets: int | None = None,
     ) -> dict[str, Any]:
-        """Return all available odds for a specific Parions Sport event id."""
+        """Return all available odds for a specific Parions Sport event id.
+
+        Every market for the event is returned by default (no truncation);
+        pass max_markets only if you need to cap the response size.
+        """
 
         return _run_tool(tools.get_event_odds, event_id, market, max_markets)
 

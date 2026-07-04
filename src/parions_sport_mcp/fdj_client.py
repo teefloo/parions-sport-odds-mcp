@@ -8,6 +8,7 @@ import re
 import sqlite3
 import tempfile
 import threading
+import time
 import zipfile
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -26,6 +27,8 @@ DEFAULT_OFFER_ZIP_URL = (
     "/service-sport-pointdevente-bff/v1/files/spdv_mobile_offre.sqlite.zip"
 )
 DEFAULT_TTL_SECONDS = 120
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_RETRY_BACKOFF_SECONDS = 0.2
 
 
 @dataclass
@@ -54,6 +57,8 @@ class FDJOfferStore:
         timeout_seconds: float = 20.0,
         http_client: httpx.Client | None = None,
         now_func: Callable[[], datetime] | None = None,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        retry_backoff_seconds: float = DEFAULT_RETRY_BACKOFF_SECONDS,
     ) -> None:
         self.source_url = source_url
         self.cache_dir = Path(cache_dir or self._default_cache_dir()).expanduser()
@@ -61,6 +66,8 @@ class FDJOfferStore:
         self.timeout_seconds = timeout_seconds
         self.http_client = http_client
         self.now_func = now_func or (lambda: datetime.now(timezone.utc))
+        self.max_retries = max_retries
+        self.retry_backoff_seconds = retry_backoff_seconds
         self._lock = threading.RLock()
 
     @classmethod
@@ -70,6 +77,13 @@ class FDJOfferStore:
             cache_dir=os.getenv("PARIONS_SPORT_CACHE_DIR"),
             ttl_seconds=int(os.getenv("PARIONS_SPORT_CACHE_TTL_SECONDS", "120")),
             timeout_seconds=float(os.getenv("PARIONS_SPORT_TIMEOUT_SECONDS", "20")),
+            max_retries=int(os.getenv("PARIONS_SPORT_MAX_RETRIES", str(DEFAULT_MAX_RETRIES))),
+            retry_backoff_seconds=float(
+                os.getenv(
+                    "PARIONS_SPORT_RETRY_BACKOFF_SECONDS",
+                    str(DEFAULT_RETRY_BACKOFF_SECONDS),
+                )
+            ),
         )
 
     def get_connection(self) -> tuple[sqlite3.Connection, CacheMetadata, list[str]]:
@@ -131,9 +145,7 @@ class FDJOfferStore:
         client = self.http_client or httpx.Client(timeout=self.timeout_seconds)
         close_client = self.http_client is None
         try:
-            response = client.get(self.source_url, headers=headers)
-        except httpx.HTTPError as exc:
-            raise SourceUnavailableError(f"Could not reach FDJ offer ZIP: {exc}") from exc
+            response = self._get_with_retries(client, headers)
         finally:
             if close_client:
                 client.close()
@@ -167,6 +179,37 @@ class FDJOfferStore:
             stale=False,
         )
         self._write_metadata(metadata)
+
+    def _get_with_retries(
+        self, client: httpx.Client, headers: dict[str, str]
+    ) -> httpx.Response:
+        """GET the offer ZIP, retrying transient network errors and 5xx responses.
+
+        4xx responses (auth, rate-limiting) are not retried since retrying
+        immediately won't help; those are handled by the caller.
+        """
+
+        last_exc: httpx.HTTPError | None = None
+        for attempt in range(self.max_retries):
+            try:
+                response = client.get(self.source_url, headers=headers)
+            except httpx.HTTPError as exc:
+                last_exc = exc
+            else:
+                if response.status_code < 500:
+                    return response
+                last_exc = None
+                if attempt == self.max_retries - 1:
+                    return response
+
+            if attempt < self.max_retries - 1:
+                time.sleep(self.retry_backoff_seconds * (2**attempt))
+
+        if last_exc is not None:
+            raise SourceUnavailableError(
+                f"Could not reach FDJ offer ZIP: {last_exc}"
+            ) from last_exc
+        raise SourceUnavailableError("Could not reach FDJ offer ZIP")
 
     def _store_zip_payload(self, payload: bytes) -> None:
         try:
