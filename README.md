@@ -3,7 +3,7 @@
 [![CI](https://github.com/teefloo/parions-sport-odds-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/teefloo/parions-sport-odds-mcp/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![MCP](https://img.shields.io/badge/MCP-compatible-5c5cff.svg)](https://modelcontextprotocol.io/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](documents/mcp/github/LICENSE)
 
 An [MCP](https://modelcontextprotocol.io/) server that gives AI agents structured access to current odds from the official Parions Sport Point de Vente website operated by FDJ, plus finished match results from TheSportsDB.
 
@@ -261,4 +261,4 @@ uv run ruff check .
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](documents/mcp/github/LICENSE).
