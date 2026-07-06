@@ -5,43 +5,57 @@
 [![MCP](https://img.shields.io/badge/MCP-compatible-5c5cff.svg)](https://modelcontextprotocol.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-An MCP server that gives AI agents structured access to current odds from the official Parions Sport Point de Vente website operated by FDJ.
+An [MCP](https://modelcontextprotocol.io/) server that gives AI agents structured access to current odds from the official Parions Sport Point de Vente website operated by FDJ, plus finished match results from TheSportsDB.
 
-The server uses FDJ's public mobile offer database ZIP as its primary source:
+The server reads FDJ's public mobile offer database, a SQLite ZIP served directly by their own infrastructure:
 
-`https://www.pointdevente.parionssport.fdj.fr/service-sport-pointdevente-bff/v1/files/spdv_mobile_offre.sqlite.zip`
+```
+https://www.pointdevente.parionssport.fdj.fr/service-sport-pointdevente-bff/v1/files/spdv_mobile_offre.sqlite.zip
+```
 
-It does not bypass DataDome, solve captchas, or call protected betting APIs. Odds are informational and can change quickly; verify official FDJ site or receipt data before relying on them.
+> [!IMPORTANT]
+> This server does not bypass DataDome, solve captchas, or call protected betting APIs — it only reads FDJ's public offer file. Odds are informational and can change quickly; verify against the official FDJ site or a receipt before relying on them.
 
-## Highlights
+## Contents
 
-- Official public FDJ source: no protected API scraping.
-- FastMCP stdio server for Claude Desktop, Cursor, and other MCP clients.
-- Structured JSON output for sports, competitions, events, markets, outcomes, odds, source metadata, and cache state.
-- Cache-aware refresh with `ETag`, `Last-Modified`, `Cache-Control`, and stale-cache fallback.
-- Unit tests plus an opt-in live schema check against the official ZIP.
+- [Features](#features)
+- [Tools](#tools)
+- [Getting started](#getting-started)
+- [Using it with an MCP client](#using-it-with-an-mcp-client)
+- [Configuration](#configuration)
+- [Output shape](#output-shape)
+- [Development](#development)
+
+## Features
+
+- **Official public source** — reads FDJ's own offer database, no protected API scraping.
+- **Multi-sport results** — finished match results across sports via TheSportsDB, with fuzzy matching back to a Parions Sport event.
+- **stdio MCP server** — built with FastMCP, works with Claude Desktop, Cursor, and any other MCP client.
+- **Cache-aware refresh** — respects `ETag`, `Last-Modified`, and `Cache-Control`, with stale-cache fallback if a refresh fails.
+- **Structured JSON** — every response includes source, cache, and warning metadata alongside the payload.
 
 ## Tools
 
-`list_sports()`
+| Tool | Description |
+| --- | --- |
+| `list_sports()` | Sports currently present in the offer database. |
+| `list_competitions(sport?)` | Competitions, optionally filtered by sport name, slug, shortcut, or numeric id. |
+| `search_odds(sport?, competition?, event_query?, date_from?, date_to?, market?, limit=20, max_markets_per_event?)` | Search current events and return structured odds. |
+| `get_event_odds(event_id, market?, max_markets?)` | All markets and odds for one event id. |
+| `get_match_results(sport?, league?, team?, date?, finished_only=true, limit=20)` | Finished (or in-progress) match results across sports via TheSportsDB. |
+| `get_event_result(event_id, day_window=1)` | Link a Parions Sport event to its finished result from TheSportsDB. |
 
-Returns sports currently present in the offer database.
+### `search_odds`
 
-`list_competitions(sport?: str | int)`
+Dates accept `YYYY-MM-DD` or ISO 8601 datetimes. Date-only values are interpreted as UTC calendar dates; `date_to` is exclusive of the following midnight.
 
-Returns competitions, optionally filtered by sport name, slug, shortcut, or numeric sport id.
+### `get_event_odds`
 
-`search_odds(sport?, competition?, event_query?, date_from?, date_to?, market?, limit=20, max_markets_per_event=50)`
+The optional `market` filter matches market labels, market type names, and lines/handicaps.
 
-Searches current events and returns structured odds. Dates accept `YYYY-MM-DD` or ISO 8601 datetimes. Date-only values are interpreted as UTC calendar dates; `date_to` is exclusive of the following midnight.
+### `get_match_results`
 
-`get_event_odds(event_id: int, market?, max_markets=200)`
-
-Returns all available markets and odds for one event id. The optional `market` filter matches market labels, market type names, and lines/handicaps.
-
-`get_match_results(sport?, league?, team?, date?, finished_only=true, limit=20)`
-
-Returns finished match results (teams, score, date, competition) across sports via [TheSportsDB](https://www.thesportsdb.com/). Provide at least one of `date` (`YYYY-MM-DD`), `league` (name or numeric id), or `team`. `sport` accepts names such as `football`, `basket`, `tennis`, `rugby`, `hockey`. Set `finished_only=false` to also include scheduled/in-progress fixtures for a date.
+Provide at least one of `date` (`YYYY-MM-DD`), `league` (name or numeric id), or `team`. `sport` accepts names such as `football`, `basket`, `tennis`, `rugby`, `hockey`. Set `finished_only=false` to also include scheduled/in-progress fixtures for a date.
 
 ```json
 {
@@ -64,11 +78,12 @@ Returns finished match results (teams, score, date, competition) across sports v
 
 Results come from a different provider than the FDJ odds, so match ids do not map to FDJ `event_id`s; reconcile on team names and date if you need to link a result to its odds.
 
-Notes: on TheSportsDB's free key, league-listing endpoints are capped, so `league` resolves common names via a built-in map (Ligue 1/2, Premier League, La Liga, Serie A, Bundesliga, Champions League, NBA, NFL, NHL, MLB, …) or any numeric league id. A bare `sport` like `basket` mixes leagues (e.g. NBA and WNBA) — pass `league="NBA"` to narrow it.
+> [!NOTE]
+> On TheSportsDB's free key, league-listing endpoints are capped, so `league` resolves common names through a built-in map (Ligue 1/2, Premier League, La Liga, Serie A, Bundesliga, Champions League, NBA, NFL, NHL, MLB, …) or any numeric league id. A bare `sport` like `basket` mixes leagues (e.g. NBA and WNBA) — pass `league="NBA"` to narrow it.
 
-`get_event_result(event_id: int, day_window=1)`
+### `get_event_result`
 
-Links a Parions Sport event to its finished result. It reads the event's teams and kickoff date from the FDJ offer, then fuzzy-matches a TheSportsDB result on team names and date. `day_window` widens the date search by N days each side (default 1) to absorb provider timezone differences. Returns the odds event, the matched `result`, an `orientation` (`same`/`swapped` home/away), and a `0..1` `match_confidence`; `found` is `false` below `0.6` and adds `NO_RESULT_MATCH` to `warnings`.
+Reads the event's teams and kickoff date from the FDJ offer, then fuzzy-matches a TheSportsDB result on team names and date. `day_window` widens the date search by N days each side (default 1) to absorb provider timezone differences. Returns the odds event, the matched `result`, an `orientation` (`same`/`swapped` home/away), and a `0..1` `match_confidence`; `found` is `false` below `0.6` and adds `NO_RESULT_MATCH` to `warnings`.
 
 ```json
 {
@@ -84,11 +99,114 @@ Links a Parions Sport event to its finished result. It reads the event's teams a
 }
 ```
 
-Limits: the two providers use different team names. Club names usually align ("Red Star" vs "Red Star FC"), but national teams differ by language — FDJ's French labels ("Turquie", "Allemagne") do not match TheSportsDB's English ones ("Turkey", "Germany"), so international fixtures often fall below the confidence threshold. Linking also only succeeds once the match is actually finished and present in TheSportsDB.
+> [!WARNING]
+> The two providers use different team names. Club names usually align ("Red Star" vs "Red Star FC"), but national teams differ by language — FDJ's French labels ("Turquie", "Allemagne") do not match TheSportsDB's English ones ("Turkey", "Germany"), so international fixtures often fall below the confidence threshold. Linking also only succeeds once the match is finished and present in TheSportsDB.
 
-## Output Shape
+## Getting started
 
-Each tool returns JSON with source/cache metadata and warnings. Odds responses include:
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.10+.
+
+```bash
+uv sync --extra dev
+```
+
+Start the server:
+
+```bash
+uv run parions-sport-mcp
+```
+
+Or as a module:
+
+```bash
+uv run python -m parions_sport_mcp
+```
+
+Inspect it during development with the [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector):
+
+```bash
+uv run mcp dev src/parions_sport_mcp/server.py
+```
+
+Smoke-test it from an MCP client session:
+
+```bash
+uv run python - <<'PY'
+import asyncio
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+async def main():
+    params = StdioServerParameters(command="uv", args=["run", "parions-sport-mcp"])
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            print([tool.name for tool in (await session.list_tools()).tools])
+
+asyncio.run(main())
+PY
+```
+
+## Using it with an MCP client
+
+### Claude Desktop
+
+Add this to your Claude Desktop MCP configuration, replacing the path with this repository's absolute path:
+
+```json
+{
+  "mcpServers": {
+    "parions-sport-odds": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/ABSOLUTE/PATH/TO/parions-sport-odds-mcp",
+        "run",
+        "parions-sport-mcp"
+      ]
+    }
+  }
+}
+```
+
+Restart Claude Desktop after editing the configuration.
+
+### Cursor
+
+Use the same command and args in Cursor's MCP server configuration:
+
+```json
+{
+  "parions-sport-odds": {
+    "command": "uv",
+    "args": [
+      "--directory",
+      "/ABSOLUTE/PATH/TO/parions-sport-odds-mcp",
+      "run",
+      "parions-sport-mcp"
+    ]
+  }
+}
+```
+
+## Configuration
+
+All configuration is via environment variables; every variable is optional.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `PARIONS_SPORT_OFFER_URL` | official FDJ ZIP URL | Override the offer ZIP source. |
+| `PARIONS_SPORT_CACHE_DIR` | `~/.cache/parions-sport-mcp` | Local cache directory for the downloaded database. |
+| `PARIONS_SPORT_CACHE_TTL_SECONDS` | `120` | Fallback cache TTL when response headers omit `max-age`. |
+| `PARIONS_SPORT_TIMEOUT_SECONDS` | `20` | HTTP timeout for ZIP refreshes. |
+| `THESPORTSDB_API_KEY` | `3` (free public test key) | Key for the `get_match_results`/`get_event_result` provider. Set a personal/Patreon key for higher limits and fresher data. |
+| `THESPORTSDB_BASE_URL` | `https://www.thesportsdb.com/api/v1/json` | Override the TheSportsDB base URL. |
+| `THESPORTSDB_CACHE_TTL_SECONDS` | `300` | In-memory cache TTL for results responses. |
+| `THESPORTSDB_TIMEOUT_SECONDS` | `20` | HTTP timeout for results requests. |
+
+## Output shape
+
+Every tool returns JSON with source/cache metadata and warnings. Odds responses look like:
 
 ```json
 {
@@ -121,112 +239,7 @@ Each tool returns JSON with source/cache metadata and warnings. Odds responses i
 
 If a refresh fails but a previous database exists, the server serves stale data and includes `STALE_CACHE_USED` in `warnings`.
 
-## Installation
-
-Install `uv` if needed, then run:
-
-```bash
-uv sync --extra dev
-```
-
-Start the server manually:
-
-```bash
-uv run parions-sport-mcp
-```
-
-Or run it as a module:
-
-```bash
-uv run python -m parions_sport_mcp
-```
-
-Inspect it during development:
-
-```bash
-uv run mcp dev src/parions_sport_mcp/server.py
-```
-
-Smoke-test the server from an MCP client session:
-
-```bash
-uv run python - <<'PY'
-import asyncio
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-
-async def main():
-    params = StdioServerParameters(command="uv", args=["run", "parions-sport-mcp"])
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            print([tool.name for tool in (await session.list_tools()).tools])
-
-asyncio.run(main())
-PY
-```
-
-## Claude Desktop
-
-Add this to your Claude Desktop MCP configuration, replacing the path with this repository's absolute path:
-
-```json
-{
-  "mcpServers": {
-    "parions-sport-odds": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "/ABSOLUTE/PATH/TO/parions-sport-odds-mcp",
-        "run",
-        "parions-sport-mcp"
-      ]
-    }
-  }
-}
-```
-
-Restart Claude Desktop after editing the configuration.
-
-## Cursor
-
-Use the same command and args in Cursor's MCP server configuration:
-
-```json
-{
-  "parions-sport-odds": {
-    "command": "uv",
-    "args": [
-      "--directory",
-      "/ABSOLUTE/PATH/TO/parions-sport-odds-mcp",
-      "run",
-      "parions-sport-mcp"
-    ]
-  }
-}
-```
-
-## Configuration
-
-Environment variables:
-
-`PARIONS_SPORT_OFFER_URL`: override the official offer ZIP URL.
-
-`PARIONS_SPORT_CACHE_DIR`: override the cache directory. Defaults to `~/.cache/parions-sport-mcp`.
-
-`PARIONS_SPORT_CACHE_TTL_SECONDS`: fallback cache TTL when response headers do not include `max-age`. Defaults to `120`.
-
-`PARIONS_SPORT_TIMEOUT_SECONDS`: HTTP timeout for ZIP refreshes. Defaults to `20`.
-
-`THESPORTSDB_API_KEY`: key for the `get_match_results` provider (TheSportsDB). Defaults to the free public test key `3`; set a personal/Patreon key for higher limits and fresher data.
-
-`THESPORTSDB_BASE_URL`: override the TheSportsDB base URL. Defaults to `https://www.thesportsdb.com/api/v1/json`.
-
-`THESPORTSDB_CACHE_TTL_SECONDS`: in-memory cache TTL for results responses. Defaults to `300`.
-
-`THESPORTSDB_TIMEOUT_SECONDS`: HTTP timeout for results requests. Defaults to `20`.
-
-## Tests
+## Development
 
 Run unit tests:
 
@@ -234,7 +247,7 @@ Run unit tests:
 uv run --extra dev pytest
 ```
 
-Run the optional live FDJ ZIP test:
+Run the optional live FDJ ZIP test, which downloads the official ZIP and validates the expected SQLite schema:
 
 ```bash
 FDJ_LIVE_TESTS=1 uv run --extra dev pytest tests/test_live_fdj.py
@@ -245,12 +258,6 @@ Run lint:
 ```bash
 uv run ruff check .
 ```
-
-The live test downloads the official ZIP and validates the expected SQLite schema.
-
-## Repository Topics
-
-`mcp`, `model-context-protocol`, `python`, `fastmcp`, `sports-odds`, `fdj`, `parions-sport`, `sqlite`, `claude-desktop`, `cursor`
 
 ## License
 
