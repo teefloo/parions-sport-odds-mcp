@@ -1,9 +1,15 @@
+<div align="center">
+
 # Parions Sport Odds MCP Server
+
+**Structured Parions Sport odds and multi-sport results for AI agents, over MCP.**
 
 [![CI](https://github.com/teefloo/parions-sport-odds-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/teefloo/parions-sport-odds-mcp/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![MCP](https://img.shields.io/badge/MCP-compatible-5c5cff.svg)](https://modelcontextprotocol.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](documents/mcp/github/LICENSE)
+
+</div>
 
 An [MCP](https://modelcontextprotocol.io/) server that gives AI agents structured access to current odds from the official Parions Sport Point de Vente website operated by FDJ, plus finished match results from TheSportsDB.
 
@@ -15,6 +21,17 @@ https://www.pointdevente.parionssport.fdj.fr/service-sport-pointdevente-bff/v1/f
 
 > [!IMPORTANT]
 > This server does not bypass DataDome, solve captchas, or call protected betting APIs — it only reads FDJ's public offer file. Odds are informational and can change quickly; verify against the official FDJ site or a receipt before relying on them.
+
+<div align="center">
+
+```mermaid
+flowchart LR
+    FDJ["FDJ offer ZIP\n(public)"] -->|cache-aware refresh| Server(("parions-sport-mcp"))
+    SDB["TheSportsDB API"] -->|finished results| Server
+    Server -->|stdio / MCP tools| Client["Claude Desktop · Cursor · any MCP client"]
+```
+
+</div>
 
 ## Contents
 
@@ -57,6 +74,9 @@ The optional `market` filter matches market labels, market type names, and lines
 
 Provide at least one of `date` (`YYYY-MM-DD`), `league` (name or numeric id), or `team`. `sport` accepts names such as `football`, `basket`, `tennis`, `rugby`, `hockey`. Set `finished_only=false` to also include scheduled/in-progress fixtures for a date.
 
+<details>
+<summary>Example response</summary>
+
 ```json
 {
   "count": 1,
@@ -76,6 +96,8 @@ Provide at least one of `date` (`YYYY-MM-DD`), `league` (name or numeric id), or
 }
 ```
 
+</details>
+
 Results come from a different provider than the FDJ odds, so match ids do not map to FDJ `event_id`s; reconcile on team names and date if you need to link a result to its odds.
 
 > [!NOTE]
@@ -84,6 +106,9 @@ Results come from a different provider than the FDJ odds, so match ids do not ma
 ### `get_event_result`
 
 Reads the event's teams and kickoff date from the FDJ offer, then fuzzy-matches a TheSportsDB result on team names and date. `day_window` widens the date search by N days each side (default 1) to absorb provider timezone differences. Returns the odds event, the matched `result`, an `orientation` (`same`/`swapped` home/away), and a `0..1` `match_confidence`; `found` is `false` below `0.6` and adds `NO_RESULT_MATCH` to `warnings`.
+
+<details>
+<summary>Example response</summary>
 
 ```json
 {
@@ -98,6 +123,8 @@ Reads the event's teams and kickoff date from the FDJ offer, then fuzzy-matches 
   "orientation": "same"
 }
 ```
+
+</details>
 
 > [!WARNING]
 > The two providers use different team names. Club names usually align ("Red Star" vs "Red Star FC"), but national teams differ by language — FDJ's French labels ("Turquie", "Allemagne") do not match TheSportsDB's English ones ("Turkey", "Germany"), so international fixtures often fall below the confidence threshold. Linking also only succeeds once the match is finished and present in TheSportsDB.
@@ -128,7 +155,8 @@ Inspect it during development with the [MCP Inspector](https://modelcontextproto
 uv run mcp dev src/parions_sport_mcp/server.py
 ```
 
-Smoke-test it from an MCP client session:
+<details>
+<summary>Smoke-test it from an MCP client session</summary>
 
 ```bash
 uv run python - <<'PY'
@@ -146,6 +174,8 @@ async def main():
 asyncio.run(main())
 PY
 ```
+
+</details>
 
 ## Using it with an MCP client
 
@@ -259,6 +289,10 @@ Run lint:
 uv run ruff check .
 ```
 
-## License
+---
 
-MIT. See [LICENSE](documents/mcp/github/LICENSE).
+<div align="center">
+
+MIT © see [LICENSE](documents/mcp/github/LICENSE)
+
+</div>
